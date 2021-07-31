@@ -1,5 +1,10 @@
 #ifndef __SSD1327__
 #define __SSD1327__
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define FONT_NORMAL 0
 #define FONT_LARGE 1
 #define FONT_SMALL 2
@@ -90,4 +95,9 @@ void ssd1327Rectangle(int x, int y, int w, int h, uint8_t ucColor, int bFill);
 #if defined(_LINUX_) && defined(__cplusplus)
 }
 #endif
+
+#ifdef __cplusplus
+}
+#endif /*extern "C"*/
+
 #endif // __SSD1327__

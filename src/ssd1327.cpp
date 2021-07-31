@@ -17,6 +17,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 //
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #ifdef _LINUX_
 #include <stdint.h>
 #include <stdlib.h>
@@ -31,6 +36,20 @@
 #define memcpy_P memcpy
 static int file_i2c = 0;
 #define USE_BACKBUFFER
+#elif defined(PICO)
+
+#include <stdint.h>
+#include <string.h>
+#include "pico/stdlib.h"
+#include "boards/pico.h"
+#include "hardware/spi.h"
+#define SPI_FREQ 1000000
+#define PROGMEM
+#define LOW 0
+#define HIGH 1
+#define GPIO_OUT 1
+#define memcpy_P memcpy
+
 #else // Arduino
 
 #include <Arduino.h>
@@ -200,31 +219,20 @@ static void oledWrite(unsigned char *pData, int iLen)
 {
   if (iCSPin != -1) // we're writing to SPI, treat it differently
   {
-    digitalWrite(iDCPin, (pData[0] == 0) ? LOW : HIGH); // data versus command
-    digitalWrite(iCSPin, LOW);
-#ifdef HAL_ESP32_HAL_H_ 
+    gpio_put(iDCPin, (pData[0] == 0) ? LOW : HIGH); // data versus command
+    gpio_put(iCSPin, LOW);
+#ifdef HAL_ESP32_HAL_H_
    {
-   uint8_t ucTemp[1024];
+	uint8_t ucTemp[1024];
         SPI.transferBytes(&pData[1], ucTemp, iLen-1);
    }
+#elif defined(PICO)
+    spi_write_blocking(spi0, &pData[1], iLen-1);
 #else
     SPI.transfer(&pData[1], iLen-1);
 #endif
-    digitalWrite(iCSPin, HIGH);
+    gpio_put(iCSPin, HIGH);
   }
-  else // must be I2C
-  {
-    if (iSDAPin != -1 && iSCLPin != -1)
-    {
-       I2CWrite(oled_addr, pData, iLen);
-    }
-    else
-    {
-       Wire.beginTransmission(oled_addr);
-       Wire.write(pData, iLen);
-       Wire.endTransmission();
-    }
-  } // I2C
 } /* oledWrite() */
 #endif // !__AVR_ATtiny85__
 
@@ -282,7 +290,7 @@ uint8_t ucTemp[8], iCount;
        s += iCount-1;
      }
    }
-	
+
 } /* ssd1322Init() */
 
 #if !defined( __AVR_ATtiny85__ ) && !defined(_LINUX_)
@@ -299,24 +307,34 @@ uint8_t uc[32];
   iResetPin = iReset;
   oled_flip = bFlip;
 
-  pinMode(iDCPin, OUTPUT);
-  pinMode(iCSPin, OUTPUT);
-  digitalWrite(iCSPin, HIGH);
+  gpio_init(iResetPin);
+  gpio_init(iDCPin);
+  gpio_init(iCSPin);
+
+  gpio_set_dir(iDCPin, GPIO_OUT);
+  gpio_set_dir(iCSPin, GPIO_OUT);
+  gpio_put(iCSPin, 1);
 
   // Reset it
   if (iResetPin != -1)
   {
-    pinMode(iResetPin, OUTPUT); 
-    digitalWrite(iResetPin, HIGH);
-    delay(50);
-    digitalWrite(iResetPin, LOW);
-    delay(50);
-    digitalWrite(iResetPin, HIGH);
-    delay(10);
+    gpio_set_dir(iResetPin, GPIO_OUT); 
+    gpio_put(iResetPin, HIGH);
+    sleep_ms(50);
+    gpio_put(iResetPin, LOW);
+    sleep_ms(50);
+    gpio_put(iResetPin, HIGH);
+    sleep_ms(10);
   }
 // Initialize SPI
+#ifdef PICO
+  spi_init(spi0, SPI_FREQ);
+  spi_set_format(spi0, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
+  spi_set_slave(spi0, 0);
+#else
   SPI.begin();
   SPI.beginTransaction(SPISettings(iSpeed, MSBFIRST, SPI_MODE0));
+#endif
 //  SPI.setClockDivider(16);
 //  SPI.setBitOrder(MSBFIRST);
 //  SPI.setDataMode(SPI_MODE0);
@@ -370,22 +388,6 @@ unsigned char uc[4];
   iSCLPin = scl;
 // Disable SPI mode code
   iCSPin = iDCPin = iResetPin = -1;
-
-#ifdef _LINUX_
-  I2CInit(sda, iAddr, iSpeed); // bus number and address for Linux
-#else
-if (sda != -1 && scl != -1)
-{
-  I2CInit(sda, scl, iSpeed);
-}
-#ifndef __AVR_ATtiny85__
-else
-{
-  Wire.begin(); // Initiate the Wire library
-  Wire.setClock(iSpeed); // use high speed I2C mode (default is 100Khz)
-}
-#endif
-#endif // _LINUX_
 
   if (oled_type == OLED_256x64)
   {
@@ -738,7 +740,7 @@ uint8_t *d;
     }
 } /* DrawScaledPixel() */
 void DrawScaledLine(int32_t iCX, int32_t iCY, int32_t x, int32_t y, int32_t iXFrac, int32_t iYFrac, uint8_t ucColor)
-{   
+{
 int32_t iLen, x2;
 uint8_t *d;
 
@@ -943,15 +945,15 @@ void ssd1327SetContrast(unsigned char ucContrast)
 //
 void ssd1327Fill(unsigned char ucColor)
 {
-uint8_t x, y;
-unsigned char temp[16];
+  uint8_t x, y;
+  unsigned char temp[16];
 
   ucColor |= (ucColor << 4); // set pixel pair color
   memset(temp, ucColor, 16);
 #ifdef USE_BACKBUFFER
   memset(ucBackbuffer, ucColor, sizeof(ucBackbuffer));
 #endif
- 
+
   ssd1327SetPosition(0,0,iMaxX,iMaxY);
   for (y=0; y<iMaxY; y++)
   {
@@ -1247,4 +1249,10 @@ void ssd1327DrawLine(int x1, int y1, int x2, int y2, uint8_t ucColor)
     } // for y
   } // y major case
 } /* ssd1327DrawLine() */
+
 #endif // USE_BACKBUFFER
+
+#ifdef __cplusplus
+}
+#endif /*extern "C"*/
+
